@@ -1,0 +1,39 @@
+{
+  "name": "rosatri-backend",
+  "version": "1.0.0",
+  "main": "src/server.js",
+  "scripts": {
+    "test": "node --test",
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "lint": "eslint .",
+    "prisma:format": "npx prisma format",
+    "prisma:validate": "npx prisma validate",
+    "prisma:migrate:create": "npx prisma migrate dev --create-only",
+    "prisma:migrate:dev": "npx prisma migrate dev",
+    "prisma:migrate:deploy": "npx prisma migrate deploy",
+    "prisma:migrate:status": "npx prisma migrate status"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "Backend API setup for Rosatri boarding house",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "helmet": "^8.1.0",
+    "morgan": "^1.10.1",
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.0.3",
+    "globals": "^17.4.0",
+    "nodemon": "^3.1.14",
+    "prisma": "^7.4.2",
+    "supertest": "^7.2.2"
+  }
+}
