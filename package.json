@@ -1,12 +1,13 @@
 {
   "name": "rosatri-backend",
   "version": "1.0.0",
-  "main": "src/server.js",
+  "main": "src/server.ts",
   "scripts": {
-    "test": "node --test",
-    "dev": "nodemon src/server.js",
-    "start": "node src/server.js",
+    "test": "node --import tsx tests/run-tests.ts",
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
     "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
     "prisma:format": "npx prisma format",
     "prisma:validate": "npx prisma validate",
     "prisma:migrate:create": "npx prisma migrate dev --create-only",
@@ -30,10 +31,19 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/morgan": "^1.9.10",
+    "@types/node": "^25.4.0",
+    "@types/pg": "^8.18.0",
+    "@types/supertest": "^7.2.0",
+    "@typescript-eslint/eslint-plugin": "^8.57.0",
+    "@typescript-eslint/parser": "^8.57.0",
     "eslint": "^10.0.3",
     "globals": "^17.4.0",
-    "nodemon": "^3.1.14",
     "prisma": "^7.4.2",
-    "supertest": "^7.2.2"
+    "supertest": "^7.2.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
   }
 }

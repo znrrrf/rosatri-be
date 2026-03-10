@@ -1,7 +1,8 @@
+import type { Request, Response } from 'express';
 import { checkDatabaseConnection } from '../config/db.js';
 import { env } from '../config/env.js';
 
-export async function getHealthStatus(_request, response) {
+export async function getHealthStatus(_request: Request, response: Response): Promise<void> {
   const database = await checkDatabaseConnection();
   const statusCode = database.ok ? 200 : 503;
 

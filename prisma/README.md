@@ -8,6 +8,7 @@ Dokumen ini menjelaskan cara mengelola `prisma/schema.prisma` untuk project Rosa
 - `prisma.config.ts` → konfigurasi Prisma 7 dan datasource
 - `prisma/migrations/` → hasil migration yang sudah dibuat Prisma
 - `prisma/migrations/20260309143000_init_schema/migration.sql` → migration pertama project ini
+- `prisma/migrations/20260309194500_add_user_password_hash/migration.sql` → migration tambahan untuk module register user
 
 ## Cara menjalankan Prisma di project ini
 
@@ -74,6 +75,8 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 Ini penting karena `gen_random_uuid()` berasal dari extension tersebut.
 
 Pada project ini, migration pertama sudah saya siapkan, sudah memuat partial index `idx_active_bookings`, dan sudah berhasil dijalankan ke database lokal.
+
+Setelah itu, ada migration lanjutan untuk menambahkan kolom `users.password_hash` agar module register user bisa menyimpan password secara aman dalam bentuk hash.
 
 ## Command Prisma yang paling sering dipakai
 

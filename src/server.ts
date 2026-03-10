@@ -6,7 +6,7 @@ const server = app.listen(env.port, () => {
   console.log(`${env.appName} is running on port ${env.port}`);
 });
 
-async function shutdown(reason) {
+function shutdown(reason: string): void {
   console.log(`Shutting down server (${reason})...`);
 
   server.close(async () => {

@@ -1,5 +1,5 @@
 import cors from 'cors';
-import express from 'express';
+import express, { type Request, type Response } from 'express';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import { env } from './config/env.js';
@@ -18,7 +18,7 @@ if (env.nodeEnv !== 'test') {
   app.use(morgan('dev'));
 }
 
-app.get('/', (_request, response) => {
+app.get('/', (_request: Request, response: Response) => {
   response.status(200).json({
     success: true,
     message: 'Welcome to Rosatri backend API setup.',

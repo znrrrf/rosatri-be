@@ -1,6 +1,6 @@
 # Rosatri Backend
 
-Backend starter untuk aplikasi kos-kosan **Rosatri** menggunakan **Express.js**, **PostgreSQL**, dan **Prisma**. Repository ini sudah berada pada tahap fondasi backend yang rapi: server Express siap jalan, koneksi PostgreSQL sudah ada, schema Prisma sudah dibuat, dan migration pertama sudah berhasil dijalankan.
+Backend starter untuk aplikasi kos-kosan **Rosatri** menggunakan **Express.js**, **TypeScript**, **PostgreSQL**, dan **Prisma**. Repository ini sudah berada pada tahap fondasi backend yang rapi: server Express siap jalan, koneksi PostgreSQL sudah ada, schema Prisma sudah dibuat, source backend utama sudah dimigrasikan ke TypeScript, dan module auth pertama untuk **register user** sudah mulai tersedia.
 
 README ini ditulis bukan hanya untuk menjelaskan kondisi project sekarang, tetapi juga sebagai **panduan dari nol sampai titik saat ini**, supaya kalau nanti Anda ingin membuat backend baru lagi, Anda tahu urutan langkah yang perlu dilakukan.
 
@@ -10,8 +10,9 @@ Command yang paling sering dipakai:
 
 - install dependency → `npm install`
 - jalankan backend dev → `npm run dev`
-- test → `npm test`
-- lint → `npm run lint`
+- type check TypeScript → `npm run typecheck`
+- test semua file `*.test.ts` → `npm test`
+- lint JavaScript + TypeScript → `npm run lint`
 - format schema Prisma → `npm run prisma:format`
 - validasi schema Prisma → `npm run prisma:validate`
 - buat draft migration baru → `npm run prisma:migrate:create -- --name nama_perubahan`
@@ -26,20 +27,30 @@ Yang sudah tersedia:
 - Express app dengan struktur folder yang rapi
 - koneksi PostgreSQL runtime menggunakan `pg`
 - health check endpoint
+- endpoint `register user` pertama
+- endpoint `login user` dasar
+- endpoint protected `auth/me`
+- endpoint update profile sendiri
+- role-based authorization dasar
 - middleware error handler dan not found handler
-- test dasar dengan `node:test` + `supertest`
+- hashing password untuk kebutuhan auth dasar
+- access token auth dasar
+- test endpoint dengan `node:test` + `supertest`
 - konfigurasi environment
 - schema Prisma lengkap
-- migration pertama Prisma sudah berhasil diaplikasikan
+- dua migration Prisma sudah tersedia di repo
 - dokumentasi perubahan schema Prisma dan Prisma 7 config
+- source backend utama sudah memakai TypeScript
 
 ## Tech Stack
 
 - Node.js 20+
+- TypeScript
 - Express.js
 - PostgreSQL
 - Prisma
 - ESLint
+- tsx
 - `node:test`
 - Supertest
 
@@ -53,25 +64,33 @@ Yang sudah tersedia:
 │   ├── migrations/
 │   │   ├── 20260309143000_init_schema/
 │   │   │   └── migration.sql
+│   │   ├── 20260309194500_add_user_password_hash/
+│   │   │   └── migration.sql
 │   │   └── migration_lock.toml
 │   ├── README.md
 │   └── schema.prisma
 ├── src/
 │   ├── config/
-│   │   ├── db.js
-│   │   └── env.js
+│   │   ├── db.ts
+│   │   └── env.ts
 │   ├── controllers/
-│   │   └── health.controller.js
+│   │   ├── auth.controller.ts
+│   │   └── health.controller.ts
 │   ├── middlewares/
-│   │   ├── error.middleware.js
-│   │   └── not-found.middleware.js
+│   │   ├── auth.middleware.ts
+│   │   ├── error.middleware.ts
+│   │   └── not-found.middleware.ts
 │   ├── routes/
-│   │   ├── health.routes.js
-│   │   └── index.js
-│   ├── app.js
-│   └── server.js
+│   │   ├── auth.routes.ts
+│   │   ├── health.routes.ts
+│   │   └── index.ts
+│   ├── utils/
+│   │   ├── password.ts
+│   │   └── token.ts
+│   ├── app.ts
+│   └── server.ts
 ├── tests/
-│   └── app.test.js
+│   └── app.test.ts
 ├── .env.example
 ├── .gitignore
 ├── eslint.config.js
@@ -108,11 +127,18 @@ DB_NAME=rosatri
 DB_USER=postgres
 DB_PASSWORD=<your_password>
 DB_SSL=false
+AUTH_TOKEN_SECRET=change-this-secret-for-development
+AUTH_TOKEN_EXPIRES_IN_HOURS=24
 
 DATABASE_URL="postgresql://postgres:<your_password>@localhost:5432/rosatri?schema=public"
 ```
 
 > Project ini memakai `prisma.config.ts`. Artinya Prisma akan memakai `DATABASE_URL` jika tersedia, atau otomatis membangun koneksi dari `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, dan `DB_SSL`. Jadi Anda bisa tetap memakai `.env` maupun `.env.local`.
+
+Untuk auth dasar saat ini:
+
+- `AUTH_TOKEN_SECRET` dipakai untuk menandatangani access token
+- `AUTH_TOKEN_EXPIRES_IN_HOURS` dipakai untuk mengatur masa berlaku token login
 
 ### 3. Buat database kosong jika belum ada
 
@@ -124,13 +150,18 @@ File `database/init.sql` hanya untuk membuat database `rosatri`, bukan untuk mem
 
 > Dependency `prisma` sudah tercantum di `devDependencies`, jadi Anda tidak perlu install manual lagi selama menjalankan `npm install`.
 
-### 4. Apply migration Prisma pertama
+### 4. Apply migration Prisma yang tersedia
 
 Untuk repo yang migration-nya sudah tersedia seperti project ini, jalankan:
 
 ```bash
 npm run prisma:migrate:deploy
 ```
+
+Saat ini repo ini sudah memiliki migration berikut:
+
+- `20260309143000_init_schema`
+- `20260309194500_add_user_password_hash`
 
 Jika Anda sedang membuat migration baru saat development lokal, gunakan:
 
@@ -148,9 +179,10 @@ npm run prisma:migrate:status
 
 Jika status normal, Prisma akan menampilkan pesan bahwa schema database sudah `up to date`.
 
-Migration pertama sudah tersedia di:
+Migration yang saat ini tersedia di repo:
 
-`prisma/migrations/20260309143000_init_schema/migration.sql`
+- `prisma/migrations/20260309143000_init_schema/migration.sql`
+- `prisma/migrations/20260309194500_add_user_password_hash/migration.sql`
 
 ### 6. Jalankan backend
 
@@ -162,19 +194,124 @@ npm run dev
 
 - root: `GET http://localhost:5000/`
 - health: `GET http://localhost:5000/api/v1/health`
+- register: `POST http://localhost:5000/api/v1/auth/register`
+- login: `POST http://localhost:5000/api/v1/auth/login`
+- me: `GET http://localhost:5000/api/v1/auth/me`
+- update profile: `PATCH http://localhost:5000/api/v1/auth/me`
+- staff area: `GET http://localhost:5000/api/v1/auth/staff-area`
+- admin area: `GET http://localhost:5000/api/v1/auth/admin-area`
 
 ## Script yang Tersedia
 
-- `npm run dev` → menjalankan server dengan nodemon
-- `npm start` → menjalankan server biasa
-- `npm run lint` → menjalankan ESLint
-- `npm test` → menjalankan test dasar
+- `npm run dev` → menjalankan server TypeScript dengan `tsx watch`
+- `npm start` → menjalankan server TypeScript dengan `tsx`
+- `npm run lint` → menjalankan ESLint untuk file JavaScript dan TypeScript
+- `npm run typecheck` → memvalidasi type TypeScript tanpa build output
+- `npm test` → menjalankan semua file test `*.test.ts` di folder `tests`
 - `npm run prisma:format` → merapikan `prisma/schema.prisma`
 - `npm run prisma:validate` → memvalidasi schema Prisma
 - `npm run prisma:migrate:create -- --name nama_perubahan` → membuat draft migration baru tanpa langsung apply
 - `npm run prisma:migrate:dev` → apply migration baru saat development lokal
 - `npm run prisma:migrate:deploy` → apply migration yang sudah tersedia
 - `npm run prisma:migrate:status` → mengecek status migration database
+
+## Endpoint yang Sudah Tersedia
+
+### 1. Root endpoint
+
+- `GET /`
+
+### 2. Health check
+
+- `GET /api/v1/health`
+- mengecek status backend dan koneksi database
+
+### 3. Register user
+
+- `POST /api/v1/auth/register`
+- endpoint auth pertama untuk membuat user baru dengan role default `renter`
+
+Field request yang saat ini dipakai:
+
+- `firstName` **wajib**
+- `username` **wajib**, minimal 3 karakter
+- `email` **wajib**, format email valid
+- `password` **wajib**, minimal 8 karakter
+- `lastName` opsional
+- `phone` opsional
+- `address` opsional
+
+Perilaku endpoint register saat ini:
+
+- password disimpan dalam bentuk hash, bukan plain text
+- response tidak mengembalikan `password` atau `passwordHash`
+- jika `email` atau `username` sudah dipakai, API mengembalikan `409`
+
+### 4. Login user
+
+- `POST /api/v1/auth/login`
+- login dasar memakai `identifier` + `password`
+
+Field request untuk login:
+
+- `identifier` **wajib**
+  - bisa berupa `email` atau `username`
+- `password` **wajib**, minimal 8 karakter
+
+Perilaku endpoint login saat ini:
+
+- mencari user berdasarkan email atau username
+- memverifikasi password terhadap `password_hash`
+- jika credential salah, API mengembalikan `401`
+- response tidak mengembalikan `password` atau `passwordHash`
+- jika login sukses, API mengembalikan `accessToken`
+
+### 5. Auth me
+
+- `GET /api/v1/auth/me`
+- membutuhkan header `Authorization: Bearer <accessToken>`
+- mengembalikan data user login yang sedang terautentikasi
+
+### 6. Update profile sendiri
+
+- `PATCH /api/v1/auth/me`
+- membutuhkan header `Authorization: Bearer <accessToken>`
+- update field profil dasar user login
+
+Field request yang saat ini didukung:
+
+- `firstName` opsional, tetapi jika dikirim harus string non-kosong
+- `lastName` opsional, bisa string atau `null`
+- `phone` opsional, bisa string atau `null`
+- `address` opsional, bisa string atau `null`
+
+Catatan perilaku endpoint ini:
+
+- minimal salah satu field di atas harus dikirim
+- `email`, `username`, dan `password` belum diubah lewat endpoint ini
+- response tetap aman tanpa `password` atau `passwordHash`
+
+### 7. Role-based authorization dasar
+
+Role user yang saat ini dikenali backend:
+
+- `renter`
+- `owner`
+- `admin`
+
+Middleware auth sekarang bisa dibagi lagi berdasarkan role.
+
+Contoh endpoint yang sudah tersedia:
+
+- `GET /api/v1/auth/staff-area`
+  - hanya bisa diakses `owner` atau `admin`
+- `GET /api/v1/auth/admin-area`
+  - hanya bisa diakses `admin`
+
+Perilaku response:
+
+- jika belum login / token tidak valid → `401`
+- jika login valid tetapi role tidak punya akses → `403`
 
 ## Command Prisma yang Akan Sering Dipakai
 
@@ -226,7 +363,7 @@ Project ini menggunakan dua layer utama untuk database:
 
 1. **Runtime connection** dengan `pg`
    - dipakai oleh Express saat aplikasi berjalan
-   - file utama: `src/config/db.js`
+   - file utama: `src/config/db.ts`
 
 2. **Schema & migration management** dengan Prisma
    - dipakai untuk mengelola struktur database
@@ -256,6 +393,19 @@ Secara berurutan, project ini sekarang sudah punya:
 11. pembuatan migration pertama Prisma
 12. migration pertama berhasil dijalankan ke database lokal
 13. dokumentasi workflow perubahan schema
+14. migrasi source backend ke TypeScript
+15. auto-discovery test runner untuk file `*.test.ts`
+16. module auth pertama untuk register user
+17. migration tambahan untuk kolom `users.password_hash`
+18. test health check dan register user
+19. module login user dasar dengan verifikasi password
+20. test login user dengan email atau username
+21. access token auth dasar
+22. middleware auth untuk protected route
+23. endpoint protected `auth/me`
+24. endpoint update profile user sendiri
+25. role-based authorization dasar
+26. endpoint contoh untuk `owner/admin` dan `admin`
 
 ## Panduan Membuat Backend Baru dari Nol Sampai Tahap Ini
 
@@ -285,7 +435,7 @@ npm install express pg cors helmet morgan dotenv
 Untuk development tools:
 
 ```bash
-npm install -D nodemon eslint @eslint/js globals supertest
+npm install -D eslint @eslint/js globals supertest typescript tsx @typescript-eslint/parser @typescript-eslint/eslint-plugin @types/node @types/express @types/cors @types/morgan @types/pg @types/supertest
 ```
 
 Kalau ingin memakai Prisma untuk migration dari awal, install juga:
@@ -322,7 +472,7 @@ Yang minimal perlu ada:
 
 ### Langkah 5 — Setup koneksi database runtime
 
-Buat file koneksi seperti `src/config/db.js` yang berisi:
+Buat file koneksi seperti `src/config/db.ts` yang berisi:
 
 - pembuatan `Pool` dari package `pg`
 - helper query
@@ -344,7 +494,7 @@ Minimal yang sebaiknya ada:
 
 ### Langkah 7 — Setup server lifecycle
 
-Pada `src/server.js`, siapkan:
+Pada `src/server.ts`, siapkan:
 
 - `app.listen()`
 - graceful shutdown
@@ -499,6 +649,18 @@ Catatan desain penting:
 
 - index terpisah untuk `users.email` dan `users.username` **tidak dibuat lagi** selain unique index bawaan, karena `@unique` sudah menghasilkan index yang diperlukan dan lebih rapi untuk dipelihara di Prisma
 
+## Catatan Perubahan Schema Terbaru
+
+Untuk mendukung module register user, ada migration tambahan berikut:
+
+`prisma/migrations/20260309194500_add_user_password_hash/migration.sql`
+
+Tujuannya menambahkan kolom:
+
+- `users.password_hash`
+
+Kolom ini dipakai untuk menyimpan hasil hash password user saat registrasi.
+
 ## Jika Nanti Ingin Mengubah Schema
 
 Gunakan alur ini:
@@ -568,6 +730,7 @@ Setelah setup selesai, jalankan minimal:
 ```bash
 npm run prisma:validate
 npm run prisma:migrate:status
+npm run typecheck
 npm test
 npm run lint
 ```
@@ -577,6 +740,12 @@ Lalu jalankan server dan cek:
 ```text
 GET http://localhost:5000/
 GET http://localhost:5000/api/v1/health
+POST http://localhost:5000/api/v1/auth/register
+POST http://localhost:5000/api/v1/auth/login
+GET http://localhost:5000/api/v1/auth/me
+PATCH http://localhost:5000/api/v1/auth/me
+GET http://localhost:5000/api/v1/auth/staff-area
+GET http://localhost:5000/api/v1/auth/admin-area
 ```
 
 ## Next Step yang Disarankan
@@ -585,9 +754,10 @@ Setelah tahap ini, langkah berikutnya yang paling natural adalah:
 
 1. mulai buat module domain seperti `users`, `kos`, `rooms`, `bookings`, `invoices`, `payments`
 2. buat service, repository, dan validation layer
-3. tambahkan auth
-4. tambahkan seed data awal
-5. siapkan kontrak API untuk frontend Next.js
+3. lanjutkan auth ke refresh token / session yang lebih matang
+4. tambahkan fitur ganti password dan update email/username dengan validasi yang lebih lengkap
+5. tambahkan seed data awal
+6. siapkan kontrak API untuk frontend Next.js
 
 ## Penutup
 
