@@ -8,6 +8,7 @@ export type AuthenticatedUser = {
   lastName: string | null;
   username: string;
   email: string;
+  emailVerified: boolean;
   phone: string | null;
   address: string | null;
   role: UserRole;
@@ -82,6 +83,7 @@ export async function requireAuth(
           last_name AS "lastName",
           username,
           email,
+          email_verified AS "emailVerified",
           phone,
           address,
           role,

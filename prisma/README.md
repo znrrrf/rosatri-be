@@ -9,6 +9,7 @@ Dokumen ini menjelaskan cara mengelola `prisma/schema.prisma` untuk project Rosa
 - `prisma/migrations/` → hasil migration yang sudah dibuat Prisma
 - `prisma/migrations/20260309143000_init_schema/migration.sql` → migration pertama project ini
 - `prisma/migrations/20260309194500_add_user_password_hash/migration.sql` → migration tambahan untuk module register user
+- `prisma/migrations/20260311053515_add_user_email_verification_otp/migration.sql` → migration tambahan untuk verifikasi email OTP user
 
 ## Cara menjalankan Prisma di project ini
 
@@ -77,6 +78,14 @@ Ini penting karena `gen_random_uuid()` berasal dari extension tersebut.
 Pada project ini, migration pertama sudah saya siapkan, sudah memuat partial index `idx_active_bookings`, dan sudah berhasil dijalankan ke database lokal.
 
 Setelah itu, ada migration lanjutan untuk menambahkan kolom `users.password_hash` agar module register user bisa menyimpan password secara aman dalam bentuk hash.
+
+Migration berikutnya menambahkan kolom:
+
+- `users.email_verified`
+- `users.email_verification_otp_hash`
+- `users.email_verification_otp_expires_at`
+
+Kolom-kolom ini dipakai untuk flow verifikasi email OTP saat register dan untuk memblok login sebelum email user terverifikasi.
 
 ## Command Prisma yang paling sering dipakai
 

@@ -7,9 +7,28 @@ import { closeDatabaseConnection, query } from "../src/config/db.js";
 process.env.NODE_ENV = "test";
 
 const { default: app } = await import("../src/app.js");
+const { clearTestEmailOutbox, getLatestTestEmail } =
+  await import("../src/services/email.service.js");
+
+/**
+ * Panduan file test ini:
+ * - File ini dipakai untuk integration test endpoint HTTP utama backend.
+ * - Gunakan nama test dengan pola: `METHOD /path should expected behavior`.
+ * - Urutan isi file: type helper -> helper setup/cleanup -> `test.after()` -> test per fitur.
+ * - Saat menambah endpoint baru, minimal tulis success case dan error case terpenting.
+ * - Jika endpoint protected, tambahkan test `401` untuk request tanpa token.
+ * - Jika endpoint memakai role, tambahkan test `403` untuk role yang ditolak dan `200` untuk role yang diizinkan.
+ * - Gunakan `randomUUID()` untuk data unik agar test tidak bentrok dengan data lama.
+ * - Query database hanya dipakai untuk memverifikasi side effect penting, misalnya password hash tersimpan atau profil benar-benar ter-update.
+ * - Jika setup berulang mulai muncul di 2+ test, pindahkan ke helper lokal di file ini.
+ * - Selalu cleanup data test yang Anda buat sendiri.
+ */
 
 type PasswordRow = {
   password_hash: string;
+  email_verified: boolean;
+  email_verification_otp_hash: string | null;
+  email_verification_otp_expires_at: Date | null;
 };
 
 type ProfileRow = {
@@ -26,6 +45,31 @@ async function cleanupTestUser(email: string, username: string): Promise<void> {
     email,
     username,
   ]);
+}
+
+function getLatestOtpForEmail(email: string): string {
+  const latestEmail = getLatestTestEmail(email);
+
+  assert.ok(latestEmail, `Expected OTP email for ${email}.`);
+
+  const otpMatch = latestEmail.text.match(/\b([0-9]{6})\b/);
+
+  assert.ok(otpMatch, `Expected 6-digit OTP inside latest email for ${email}.`);
+
+  return otpMatch[1];
+}
+
+async function verifyTestUserEmail(email: string): Promise<void> {
+  const otp = getLatestOtpForEmail(email);
+  const response = await request(app)
+    .post("/api/v1/auth/verify-email-otp")
+    .send({
+      email,
+      otp,
+    });
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.success, true);
 }
 
 async function updateTestUserRole(
@@ -46,6 +90,7 @@ async function createAuthenticatedTestUser(role: UserRole): Promise<{
   const password = "rahasia123";
 
   await cleanupTestUser(email, username);
+  clearTestEmailOutbox();
 
   const registerResponse = await request(app)
     .post("/api/v1/auth/register")
@@ -58,6 +103,8 @@ async function createAuthenticatedTestUser(role: UserRole): Promise<{
     });
 
   assert.equal(registerResponse.statusCode, 201);
+
+  await verifyTestUserEmail(email);
 
   if (role !== "renter") {
     await updateTestUserRole(email, role);
@@ -81,6 +128,7 @@ test.after(async () => {
   await closeDatabaseConnection();
 });
 
+// Fondasi endpoint publik yang harus tetap hidup walaupun fitur lain berubah.
 test("GET / should return backend metadata", async () => {
   const response = await request(app).get("/");
 
@@ -105,6 +153,7 @@ test("GET /api/v1/health should return service and database status", async () =>
   assert.equal(response.body.data.database.ok, true);
 });
 
+// Auth dasar: validasi register, login, dan response aman tanpa data sensitif.
 test("POST /api/v1/auth/register should validate required fields", async () => {
   const response = await request(app).post("/api/v1/auth/register").send({
     firstName: "Rosatri",
@@ -124,6 +173,7 @@ test("POST /api/v1/auth/register should create renter user and store hashed pass
   const password = "rahasia123";
 
   await cleanupTestUser(email, username);
+  clearTestEmailOutbox();
 
   const response = await request(app).post("/api/v1/auth/register").send({
     firstName: "Rosatri",
@@ -140,17 +190,36 @@ test("POST /api/v1/auth/register should create renter user and store hashed pass
   assert.equal(response.body.data.email, email);
   assert.equal(response.body.data.username, username);
   assert.equal(response.body.data.role, "renter");
+  assert.equal(response.body.data.emailVerified, false);
+  assert.equal(response.body.data.verificationRequired, true);
   assert.equal("passwordHash" in response.body.data, false);
   assert.equal("password" in response.body.data, false);
 
+  const latestEmail = getLatestTestEmail(email);
+
+  assert.ok(latestEmail);
+  assert.equal(latestEmail.subject, "Rosatri email verification OTP");
+
   const databaseResult = await query<PasswordRow>(
-    "SELECT password_hash FROM users WHERE email = $1 LIMIT 1",
+    `
+      SELECT
+        password_hash,
+        email_verified,
+        email_verification_otp_hash,
+        email_verification_otp_expires_at
+      FROM users
+      WHERE email = $1
+      LIMIT 1
+    `,
     [email],
   );
 
   assert.equal(databaseResult.rowCount, 1);
   assert.notEqual(databaseResult.rows[0].password_hash, password);
   assert.ok(databaseResult.rows[0].password_hash.includes(":"));
+  assert.equal(databaseResult.rows[0].email_verified, false);
+  assert.ok(databaseResult.rows[0].email_verification_otp_hash);
+  assert.ok(databaseResult.rows[0].email_verification_otp_expires_at);
 
   await cleanupTestUser(email, username);
 });
@@ -165,6 +234,93 @@ test("POST /api/v1/auth/login should reject invalid credentials", async () => {
   assert.equal(response.body.success, false);
 });
 
+test("POST /api/v1/auth/login should reject user with unverified email", async () => {
+  const suffix = randomUUID();
+  const email = `unverified-${suffix}@example.com`;
+  const username = `unverified_${suffix.replace(/-/g, "").slice(0, 12)}`;
+  const password = "rahasia123";
+
+  await cleanupTestUser(email, username);
+  clearTestEmailOutbox();
+
+  const registerResponse = await request(app)
+    .post("/api/v1/auth/register")
+    .send({
+      firstName: "Rosatri",
+      lastName: "Pending",
+      username,
+      email,
+      password,
+    });
+
+  assert.equal(registerResponse.statusCode, 201);
+
+  const loginResponse = await request(app).post("/api/v1/auth/login").send({
+    identifier: email,
+    password,
+  });
+
+  assert.equal(loginResponse.statusCode, 403);
+  assert.equal(loginResponse.body.success, false);
+
+  await cleanupTestUser(email, username);
+});
+
+test("POST /api/v1/auth/verify-email-otp should verify registered user email", async () => {
+  const suffix = randomUUID();
+  const email = `verify-${suffix}@example.com`;
+  const username = `verify_${suffix.replace(/-/g, "").slice(0, 12)}`;
+  const password = "rahasia123";
+
+  await cleanupTestUser(email, username);
+  clearTestEmailOutbox();
+
+  const registerResponse = await request(app)
+    .post("/api/v1/auth/register")
+    .send({
+      firstName: "Rosatri",
+      lastName: "Verify",
+      username,
+      email,
+      password,
+    });
+
+  assert.equal(registerResponse.statusCode, 201);
+
+  const otp = getLatestOtpForEmail(email);
+  const verifyResponse = await request(app)
+    .post("/api/v1/auth/verify-email-otp")
+    .send({ email, otp });
+
+  assert.equal(verifyResponse.statusCode, 200);
+  assert.equal(verifyResponse.body.success, true);
+  assert.equal(verifyResponse.body.data.emailVerified, true);
+
+  const databaseResult = await query<{
+    email_verified: boolean;
+    email_verification_otp_hash: string | null;
+    email_verification_otp_expires_at: Date | null;
+  }>(
+    `
+      SELECT
+        email_verified,
+        email_verification_otp_hash,
+        email_verification_otp_expires_at
+      FROM users
+      WHERE email = $1
+      LIMIT 1
+    `,
+    [email],
+  );
+
+  assert.equal(databaseResult.rowCount, 1);
+  assert.equal(databaseResult.rows[0].email_verified, true);
+  assert.equal(databaseResult.rows[0].email_verification_otp_hash, null);
+  assert.equal(databaseResult.rows[0].email_verification_otp_expires_at, null);
+
+  await cleanupTestUser(email, username);
+});
+
 test("POST /api/v1/auth/login should authenticate user with email or username", async () => {
   const suffix = randomUUID();
   const email = `login-${suffix}@example.com`;
@@ -172,6 +328,7 @@ test("POST /api/v1/auth/login should authenticate user with email or username", 
   const password = "rahasia123";
 
   await cleanupTestUser(email, username);
+  clearTestEmailOutbox();
 
   const registerResponse = await request(app)
     .post("/api/v1/auth/register")
@@ -184,6 +341,8 @@ test("POST /api/v1/auth/login should authenticate user with email or username", 
     });
 
   assert.equal(registerResponse.statusCode, 201);
+
+  await verifyTestUserEmail(email);
 
   const loginByEmailResponse = await request(app)
     .post("/api/v1/auth/login")
@@ -214,6 +373,7 @@ test("POST /api/v1/auth/login should authenticate user with email or username", 
   await cleanupTestUser(email, username);
 });
 
+// Protected endpoint: selalu uji minimal unauthorized + success case.
 test("GET /api/v1/auth/me should reject request without bearer token", async () => {
   const response = await request(app).get("/api/v1/auth/me");
 
@@ -228,6 +388,7 @@ test("GET /api/v1/auth/me should return authenticated user from access token", a
   const password = "rahasia123";
 
   await cleanupTestUser(email, username);
+  clearTestEmailOutbox();
 
   const registerResponse = await request(app)
     .post("/api/v1/auth/register")
@@ -240,6 +401,8 @@ test("GET /api/v1/auth/me should return authenticated user from access token", a
     });
 
   assert.equal(registerResponse.statusCode, 201);
+
+  await verifyTestUserEmail(email);
 
   const loginResponse = await request(app).post("/api/v1/auth/login").send({
     identifier: email,
@@ -280,6 +443,7 @@ test("PATCH /api/v1/auth/me should update authenticated user profile", async () 
   const password = "rahasia123";
 
   await cleanupTestUser(email, username);
+  clearTestEmailOutbox();
 
   const registerResponse = await request(app)
     .post("/api/v1/auth/register")
@@ -294,6 +458,8 @@ test("PATCH /api/v1/auth/me should update authenticated user profile", async () 
     });
 
   assert.equal(registerResponse.statusCode, 201);
+
+  await verifyTestUserEmail(email);
 
   const loginResponse = await request(app).post("/api/v1/auth/login").send({
     identifier: email,
@@ -340,6 +506,7 @@ test("PATCH /api/v1/auth/me should update authenticated user profile", async () 
   await cleanupTestUser(email, username);
 });
 
+// RBAC: uji role yang ditolak (`403`) dan role yang diizinkan (`200`).
 test("GET /api/v1/auth/admin-area should reject renter role", async () => {
   const session = await createAuthenticatedTestUser("renter");
 

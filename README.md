@@ -129,6 +129,16 @@ DB_PASSWORD=<your_password>
 DB_SSL=false
 AUTH_TOKEN_SECRET=change-this-secret-for-development
 AUTH_TOKEN_EXPIRES_IN_HOURS=24
+EMAIL_PROVIDER=log
+EMAIL_FROM_ADDRESS=no-reply@rosatri.local
+EMAIL_OTP_EXPIRES_IN_MINUTES=10
+
+# Required when EMAIL_PROVIDER=smtp
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=
+SMTP_PASS=
 
 DATABASE_URL="postgresql://postgres:<your_password>@localhost:5432/rosatri?schema=public"
 ```
@@ -139,6 +149,10 @@ Untuk auth dasar saat ini:
 
 - `AUTH_TOKEN_SECRET` dipakai untuk menandatangani access token
 - `AUTH_TOKEN_EXPIRES_IN_HOURS` dipakai untuk mengatur masa berlaku token login
+- `EMAIL_PROVIDER` menentukan mode kirim email (`log` atau `smtp`)
+- `EMAIL_FROM_ADDRESS` dipakai sebagai alamat pengirim email
+- `EMAIL_OTP_EXPIRES_IN_MINUTES` mengatur masa berlaku OTP verifikasi email
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS` dipakai Nodemailer saat `EMAIL_PROVIDER=smtp`
 
 ### 3. Buat database kosong jika belum ada
 
@@ -196,6 +210,7 @@ npm run dev
 - health: `GET http://localhost:5000/api/v1/health`
 - register: `POST http://localhost:5000/api/v1/auth/register`
 - login: `POST http://localhost:5000/api/v1/auth/login`
+- verify email otp: `POST http://localhost:5000/api/v1/auth/verify-email-otp`
 - me: `GET http://localhost:5000/api/v1/auth/me`
 - update profile: `PATCH http://localhost:5000/api/v1/auth/me`
 - staff area: `GET http://localhost:5000/api/v1/auth/staff-area`
@@ -215,6 +230,86 @@ npm run dev
 - `npm run prisma:migrate:deploy` → apply migration yang sudah tersedia
 - `npm run prisma:migrate:status` → mengecek status migration database
 
+## Panduan Menulis `tests/app.test.ts`
+
+Saat ini `tests/app.test.ts` adalah file utama untuk integration test HTTP backend. Developer baru sebaiknya mengikuti pola yang sama agar test konsisten dan mudah dibaca.
+
+### Apa fungsi file ini
+
+- menguji endpoint dari sisi request/response nyata melalui `supertest`
+- memverifikasi status code dan payload penting
+- memverifikasi side effect ke database jika endpoint memang mengubah data
+- menjadi referensi pattern test untuk endpoint baru
+
+### Pola isi file yang dipakai sekarang
+
+Urutan penulisannya:
+
+1. import dependency minimum: `assert`, `randomUUID`, `node:test`, `supertest`, dan helper database bila perlu
+2. set environment test dan import `app`
+3. definisikan type kecil untuk hasil query database bila memang diperlukan
+4. buat helper lokal seperti cleanup data, ubah role, atau buat user login siap pakai
+5. tutup koneksi database di `test.after()`
+6. tulis test per kelompok fitur: public endpoint -> auth -> protected endpoint -> RBAC
+
+### Pattern nama test
+
+Gunakan format ini:
+
+- `GET /api/v1/health should return service and database status`
+- `POST /api/v1/auth/login should reject invalid credentials`
+
+Pattern ini sengaja dipakai agar developer langsung tahu:
+
+- method HTTP
+- path endpoint
+- ekspektasi perilaku
+
+### Apa yang wajib ditulis saat menambah test baru
+
+Minimal checklist untuk endpoint baru:
+
+- 1 test success case
+- 1 test error / validation case paling penting
+- `401` jika endpoint butuh login
+- `403` jika endpoint dibatasi role tertentu
+- verifikasi database jika endpoint mengubah state penting
+
+### Aturan praktis yang perlu diikuti
+
+- gunakan `randomUUID()` untuk email / username unik
+- jangan mengandalkan data tetap yang bisa bentrok antar-run test
+- cleanup data yang dibuat oleh test sendiri
+- jangan assert seluruh response body jika tidak perlu; cukup assert field penting
+- gunakan helper lokal jika setup yang sama dipakai berulang di beberapa test
+- query langsung ke database hanya untuk membuktikan side effect penting, bukan untuk menggantikan assertion utama dari API response
+
+### Kapan pakai query database di test
+
+Pakai query database jika Anda perlu memastikan perubahan benar-benar tersimpan, misalnya:
+
+- password disimpan sebagai hash, bukan plain text
+- profile user benar-benar berubah setelah `PATCH /auth/me`
+- role user test berubah sebelum memverifikasi RBAC
+
+Kalau endpoint hanya membaca data tanpa side effect, biasanya assertion response API sudah cukup.
+
+### Kapan bikin helper baru di `app.test.ts`
+
+Buat helper lokal jika langkah setup mulai berulang, misalnya:
+
+- hapus user test
+- ubah role user test
+- register + login untuk mendapatkan `accessToken`
+
+Tujuannya agar isi test tetap fokus pada perilaku yang diuji, bukan tenggelam di setup panjang.
+
+### Cara menjalankan test
+
+- `npm test`
+
+Script ini akan menjalankan semua file `*.test.ts` di folder `tests` melalui `tests/run-tests.ts`.
+
 ## Endpoint yang Sudah Tersedia
 
 ### 1. Root endpoint
@@ -230,6 +325,7 @@ npm run dev
 
 - `POST /api/v1/auth/register`
 - endpoint auth pertama untuk membuat user baru dengan role default `renter`
+- setelah register sukses, backend membuat OTP verifikasi email dan mengirimkannya ke email user
 
 Field request yang saat ini dipakai:
 
@@ -244,7 +340,10 @@ Field request yang saat ini dipakai:
 Perilaku endpoint register saat ini:
 
 - password disimpan dalam bentuk hash, bukan plain text
+- user baru dibuat dengan `emailVerified = false`
+- OTP verifikasi email disimpan dalam bentuk hash + expiry time
 - response tidak mengembalikan `password` atau `passwordHash`
+- response menandai bahwa verifikasi email masih diperlukan
 - jika `email` atau `username` sudah dipakai, API mengembalikan `409`
 
 ### 4. Login user
@@ -263,16 +362,33 @@ Perilaku endpoint login saat ini:
 - mencari user berdasarkan email atau username
 - memverifikasi password terhadap `password_hash`
 - jika credential salah, API mengembalikan `401`
+- jika email user belum terverifikasi, API mengembalikan `403`
 - response tidak mengembalikan `password` atau `passwordHash`
 - jika login sukses, API mengembalikan `accessToken`
 
-### 5. Auth me
+### 5. Verify email OTP
+
+- `POST /api/v1/auth/verify-email-otp`
+- dipakai untuk memverifikasi OTP 6 digit yang dikirim saat register
+
+Field request:
+
+- `email` **wajib**, format email valid
+- `otp` **wajib**, harus string angka 6 digit
+
+Perilaku endpoint verifikasi OTP:
+
+- jika OTP valid dan belum kedaluwarsa, user akan di-set menjadi `emailVerified = true`
+- OTP hash dan expiry akan dibersihkan setelah verifikasi berhasil
+- jika OTP salah atau expired, API mengembalikan `400`
+
+### 6. Auth me
 
 - `GET /api/v1/auth/me`
 - membutuhkan header `Authorization: Bearer <accessToken>`
 - mengembalikan data user login yang sedang terautentikasi
 
-### 6. Update profile sendiri
+### 7. Update profile sendiri
 
 - `PATCH /api/v1/auth/me`
 - membutuhkan header `Authorization: Bearer <accessToken>`
@@ -651,15 +767,19 @@ Catatan desain penting:
 
 ## Catatan Perubahan Schema Terbaru
 
-Untuk mendukung module register user, ada migration tambahan berikut:
+Untuk mendukung auth saat ini, ada dua migration tambahan penting berikut:
 
-`prisma/migrations/20260309194500_add_user_password_hash/migration.sql`
+- `prisma/migrations/20260309194500_add_user_password_hash/migration.sql`
+- `prisma/migrations/20260311053515_add_user_email_verification_otp/migration.sql`
 
-Tujuannya menambahkan kolom:
+Kolom yang ditambahkan untuk flow auth:
 
 - `users.password_hash`
+- `users.email_verified`
+- `users.email_verification_otp_hash`
+- `users.email_verification_otp_expires_at`
 
-Kolom ini dipakai untuk menyimpan hasil hash password user saat registrasi.
+Kolom-kolom ini dipakai untuk menyimpan hash password, status verifikasi email, hash OTP, dan waktu kedaluwarsa OTP.
 
 ## Jika Nanti Ingin Mengubah Schema
 

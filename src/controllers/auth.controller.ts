@@ -1,7 +1,15 @@
 import type { Request, Response } from "express";
 import { query } from "../config/db.js";
+import { env } from "../config/env.js";
 import type { AuthenticatedUser } from "../middlewares/auth.middleware.js";
+import { sendEmailVerificationOtpEmail } from "../services/email.service.js";
 import { hashPassword, verifyPassword } from "../utils/password.js";
+import {
+  generateEmailVerificationOtp,
+  hashEmailVerificationOtp,
+  isValidEmailVerificationOtp,
+  verifyEmailVerificationOtp,
+} from "../utils/otp.js";
 import { createAuthToken, type UserRole } from "../utils/token.js";
 
 type RegisterUserBody = {
@@ -17,6 +25,11 @@ type RegisterUserBody = {
 type LoginUserBody = {
   identifier?: unknown;
   password?: unknown;
+};
+
+type VerifyEmailOtpBody = {
+  email?: unknown;
+  otp?: unknown;
 };
 
 type UpdateCurrentUserBody = {
@@ -42,6 +55,7 @@ type RegisteredUserRow = {
   lastName: string | null;
   username: string;
   email: string;
+  emailVerified: boolean;
   phone: string | null;
   address: string | null;
   role: UserRole;
@@ -53,6 +67,11 @@ type LoginUserInput = {
   password: string;
 };
 
+type VerifyEmailOtpInput = {
+  email: string;
+  otp: string;
+};
+
 type UpdateCurrentUserInput = {
   firstName: string;
   lastName: string | null;
@@ -62,6 +81,11 @@ type UpdateCurrentUserInput = {
 
 type LoginUserRow = RegisteredUserRow & {
   passwordHash: string;
+};
+
+type EmailVerificationRow = RegisteredUserRow & {
+  emailVerificationOtpHash: string | null;
+  emailVerificationOtpExpiresAt: Date | null;
 };
 
 type DatabaseError = Error & {
@@ -78,6 +102,7 @@ function toSafeUser(user: RegisteredUserRow): RegisteredUserRow {
     lastName: user.lastName,
     username: user.username,
     email: user.email,
+    emailVerified: user.emailVerified,
     phone: user.phone,
     address: user.address,
     role: user.role,
@@ -165,6 +190,31 @@ function parseLoginUserInput(body: LoginUserBody): {
     data: {
       identifier: identifier.toLowerCase(),
       password: body.password,
+    },
+  };
+}
+
+function parseVerifyEmailOtpInput(body: VerifyEmailOtpBody): {
+  data?: VerifyEmailOtpInput;
+  message?: string;
+} {
+  const emailValue = getRequiredString(body.email);
+  const email = emailValue?.toLowerCase();
+
+  if (!email || !EMAIL_REGEX.test(email)) {
+    return { message: "A valid email is required." };
+  }
+
+  const otp = getRequiredString(body.otp);
+
+  if (!otp || !isValidEmailVerificationOtp(otp)) {
+    return { message: "otp must be a 6-digit numeric string." };
+  }
+
+  return {
+    data: {
+      email,
+      otp,
     },
   };
 }
@@ -276,6 +326,12 @@ export async function registerUser(
   }
 
   const passwordHash = await hashPassword(data.password);
+  const emailVerificationOtp = generateEmailVerificationOtp();
+  const emailVerificationOtpHash =
+    hashEmailVerificationOtp(emailVerificationOtp);
+  const emailVerificationOtpExpiresAt = new Date(
+    Date.now() + env.email.otpExpiresInMinutes * 60 * 1000,
+  );
 
   try {
     const result = await query<RegisteredUserRow>(
@@ -286,17 +342,21 @@ export async function registerUser(
           username,
           email,
           password_hash,
+          email_verified,
+          email_verification_otp_hash,
+          email_verification_otp_expires_at,
           phone,
           address,
           role
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, 'renter')
+        VALUES ($1, $2, $3, $4, $5, false, $6, $7, $8, $9, 'renter')
         RETURNING
           id,
           first_name AS "firstName",
           last_name AS "lastName",
           username,
           email,
+          email_verified AS "emailVerified",
           phone,
           address,
           role,
@@ -308,6 +368,8 @@ export async function registerUser(
         data.username,
         data.email,
         passwordHash,
+        emailVerificationOtpHash,
+        emailVerificationOtpExpiresAt,
         data.phone,
         data.address,
       ],
@@ -315,10 +377,30 @@ export async function registerUser(
 
     const user = result.rows[0];
 
+    try {
+      await sendEmailVerificationOtpEmail({
+        to: data.email,
+        otp: emailVerificationOtp,
+      });
+    } catch {
+      await query("DELETE FROM users WHERE id = $1", [user.id]).catch(
+        () => undefined,
+      );
+
+      response.status(500).json({
+        success: false,
+        message: "Failed to send email verification OTP.",
+      });
+      return;
+    }
+
     response.status(201).json({
       success: true,
-      message: "User registered successfully.",
-      data: toSafeUser(user),
+      message: "User registered successfully. OTP sent to email.",
+      data: {
+        ...toSafeUser(user),
+        verificationRequired: true,
+      },
     });
   } catch (error: unknown) {
     const databaseError = error as DatabaseError;
@@ -365,6 +447,7 @@ export async function loginUser(
           username,
           email,
           password_hash AS "passwordHash",
+          email_verified AS "emailVerified",
           phone,
           address,
           role,
@@ -399,6 +482,14 @@ export async function loginUser(
       return;
     }
 
+    if (!user.emailVerified) {
+      response.status(403).json({
+        success: false,
+        message: "Email address is not verified. Please verify OTP first.",
+      });
+      return;
+    }
+
     response.status(200).json({
       success: true,
       message: "Login successful.",
@@ -416,6 +507,113 @@ export async function loginUser(
     response.status(500).json({
       success: false,
       message: "Failed to login user.",
+    });
+  }
+}
+
+export async function verifyEmailOtp(
+  request: Request,
+  response: Response,
+): Promise<void> {
+  const { data, message } = parseVerifyEmailOtpInput(
+    request.body as VerifyEmailOtpBody,
+  );
+
+  if (!data) {
+    response.status(400).json({
+      success: false,
+      message,
+    });
+    return;
+  }
+
+  try {
+    const result = await query<EmailVerificationRow>(
+      `
+        SELECT
+          id,
+          first_name AS "firstName",
+          last_name AS "lastName",
+          username,
+          email,
+          email_verified AS "emailVerified",
+          email_verification_otp_hash AS "emailVerificationOtpHash",
+          email_verification_otp_expires_at AS "emailVerificationOtpExpiresAt",
+          phone,
+          address,
+          role,
+          created_at AS "createdAt"
+        FROM users
+        WHERE LOWER(email) = $1
+        LIMIT 1
+      `,
+      [data.email],
+    );
+
+    const user = result.rows[0];
+
+    if (!user) {
+      response.status(400).json({
+        success: false,
+        message: "Invalid or expired email verification OTP.",
+      });
+      return;
+    }
+
+    if (user.emailVerified) {
+      response.status(200).json({
+        success: true,
+        message: "Email is already verified.",
+        data: toSafeUser(user),
+      });
+      return;
+    }
+
+    if (
+      !user.emailVerificationOtpHash ||
+      !user.emailVerificationOtpExpiresAt ||
+      user.emailVerificationOtpExpiresAt.getTime() < Date.now() ||
+      !verifyEmailVerificationOtp(data.otp, user.emailVerificationOtpHash)
+    ) {
+      response.status(400).json({
+        success: false,
+        message: "Invalid or expired email verification OTP.",
+      });
+      return;
+    }
+
+    const updateResult = await query<RegisteredUserRow>(
+      `
+        UPDATE users
+        SET
+          email_verified = true,
+          email_verification_otp_hash = NULL,
+          email_verification_otp_expires_at = NULL
+        WHERE id = $1
+        RETURNING
+          id,
+          first_name AS "firstName",
+          last_name AS "lastName",
+          username,
+          email,
+          email_verified AS "emailVerified",
+          phone,
+          address,
+          role,
+          created_at AS "createdAt"
+      `,
+      [user.id],
+    );
+
+    response.status(200).json({
+      success: true,
+      message: "Email verified successfully.",
+      data: toSafeUser(updateResult.rows[0]),
+    });
+  } catch {
+    response.status(500).json({
+      success: false,
+      message: "Failed to verify email OTP.",
     });
   }
 }
@@ -484,6 +682,7 @@ export async function updateCurrentUser(
           last_name AS "lastName",
           username,
           email,
+          email_verified AS "emailVerified",
           phone,
           address,
           role,

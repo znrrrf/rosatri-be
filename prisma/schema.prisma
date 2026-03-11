@@ -46,33 +46,36 @@ enum PaymentMethod {
 }
 
 model User {
-  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  firstName     String    @map("first_name") @db.VarChar(255)
-  lastName      String?   @map("last_name") @db.VarChar(255)
-  username      String    @unique @db.VarChar(255)
-  email         String    @unique @db.VarChar(255)
-  passwordHash  String    @map("password_hash") @db.Text
-  phone         String?   @db.VarChar(50)
-  address       String?   @db.Text
-  idCardNumber  String?   @map("id_card_number") @db.VarChar(100)
-  idCardPhoto   String?   @map("id_card_photo") @db.VarChar(255)
-  role          UserRole
-  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
-  ownedKos      Kos[]     @relation("UserOwnedKos")
-  renterBookings Booking[] @relation("UserBookings")
+  id                            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  firstName                     String    @map("first_name") @db.VarChar(255)
+  lastName                      String?   @map("last_name") @db.VarChar(255)
+  username                      String    @unique @db.VarChar(255)
+  email                         String    @unique @db.VarChar(255)
+  passwordHash                  String    @map("password_hash") @db.Text
+  emailVerified                 Boolean   @default(false) @map("email_verified")
+  emailVerificationOtpHash      String?   @map("email_verification_otp_hash") @db.Text
+  emailVerificationOtpExpiresAt DateTime? @map("email_verification_otp_expires_at") @db.Timestamp(6)
+  phone                         String?   @db.VarChar(50)
+  address                       String?   @db.Text
+  idCardNumber                  String?   @map("id_card_number") @db.VarChar(100)
+  idCardPhoto                   String?   @map("id_card_photo") @db.VarChar(255)
+  role                          UserRole
+  createdAt                     DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  ownedKos                      Kos[]     @relation("UserOwnedKos")
+  renterBookings                Booking[] @relation("UserBookings")
 
   @@map("users")
 }
 
 model Kos {
-  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  ownerId   String    @map("owner_id") @db.Uuid
-  kosName   String    @map("kos_name") @db.VarChar(255)
-  location  String?   @db.Text
-  lat       Decimal?  @db.Decimal(10, 7)
-  lng       Decimal?  @db.Decimal(10, 7)
-  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
-  owner     User      @relation("UserOwnedKos", fields: [ownerId], references: [id], onDelete: Cascade)
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerId   String   @map("owner_id") @db.Uuid
+  kosName   String   @map("kos_name") @db.VarChar(255)
+  location  String?  @db.Text
+  lat       Decimal? @db.Decimal(10, 7)
+  lng       Decimal? @db.Decimal(10, 7)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  owner     User     @relation("UserOwnedKos", fields: [ownerId], references: [id], onDelete: Cascade, map: "fk_kos_owner")
   rooms     Room[]
 
   @@index([ownerId], map: "idx_kos_owner")
@@ -86,7 +89,7 @@ model Room {
   roomType  String?   @map("room_type") @db.VarChar(100)
   price     Decimal   @db.Decimal(12, 2)
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
-  kos       Kos       @relation(fields: [kosId], references: [id], onDelete: Cascade)
+  kos       Kos       @relation(fields: [kosId], references: [id], onDelete: Cascade, map: "fk_rooms_kos")
   bookings  Booking[]
 
   @@index([kosId], map: "idx_rooms_kos")
@@ -94,16 +97,16 @@ model Room {
 }
 
 model Booking {
-  id         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  roomId     String        @map("room_id") @db.Uuid
-  renterId   String        @map("renter_id") @db.Uuid
-  startDate  DateTime      @map("start_date") @db.Date
-  endDate    DateTime?     @map("end_date") @db.Date
-  status     BookingStatus @default(Pending)
-  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamp(6)
-  room       Room          @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  renter     User          @relation("UserBookings", fields: [renterId], references: [id], onDelete: Cascade)
-  invoices   Invoice[]
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  roomId    String        @map("room_id") @db.Uuid
+  renterId  String        @map("renter_id") @db.Uuid
+  startDate DateTime      @map("start_date") @db.Date
+  endDate   DateTime?     @map("end_date") @db.Date
+  status    BookingStatus @default(Pending)
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamp(6)
+  room      Room          @relation(fields: [roomId], references: [id], onDelete: Cascade, map: "fk_booking_room")
+  renter    User          @relation("UserBookings", fields: [renterId], references: [id], onDelete: Cascade, map: "fk_booking_renter")
+  invoices  Invoice[]
 
   @@index([roomId], map: "idx_bookings_room")
   @@index([renterId], map: "idx_bookings_renter")
@@ -119,7 +122,7 @@ model Invoice {
   dueDate      DateTime      @map("due_date") @db.Date
   status       InvoiceStatus @default(Unpaid)
   createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamp(6)
-  booking      Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  booking      Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade, map: "fk_invoice_booking")
   payments     Payment[]
 
   @@index([bookingId], map: "idx_invoices_booking")
@@ -135,7 +138,7 @@ model Payment {
   paymentDate   DateTime       @map("payment_date") @db.Timestamp(6)
   paymentMethod PaymentMethod? @map("payment_method")
   createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamp(6)
-  invoice       Invoice        @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoice       Invoice        @relation(fields: [invoiceId], references: [id], onDelete: Cascade, map: "fk_payment_invoice")
 
   @@index([invoiceId], map: "idx_payments_invoice")
   @@index([paymentDate], map: "idx_payments_date")

@@ -6,6 +6,7 @@ import {
   registerUser,
   getStaffArea,
   updateCurrentUser,
+  verifyEmailOtp,
 } from "../controllers/auth.controller.js";
 import { requireAuth, requireRoles } from "../middlewares/auth.middleware.js";
 
@@ -13,6 +14,7 @@ const authRouter = Router();
 
 authRouter.post("/register", registerUser);
 authRouter.post("/login", loginUser);
+authRouter.post("/verify-email-otp", verifyEmailOtp);
 authRouter.get("/me", requireAuth, getCurrentUser);
 authRouter.patch("/me", requireAuth, updateCurrentUser);
 
